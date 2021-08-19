@@ -18,12 +18,12 @@ from matplotlib.ticker import LinearLocator, FormatStrFormatter
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from mpl_toolkits.mplot3d import Axes3D
 
-from PyQt5.QtCore import QAbstractTableModel, Qt
-from PyQt5.QtGui import QIcon
+from PyQt5.QtCore import QObject, QRect, pyqtSignal
+from PyQt5.QtGui import QIcon, QTextCursor
 from PyQt5.QtWidgets import QTableView
 from PyQt5.QtWidgets import QLabel, QComboBox, QLineEdit, QListWidget, QCheckBox, QListWidgetItem
 from PyQt5.QtWidgets import QHBoxLayout, QVBoxLayout, QGridLayout
-from PyQt5.QtWidgets import QApplication, QWidget
+from PyQt5.QtWidgets import QApplication, QWidget, QTextEdit
 from PyQt5.QtWidgets import QPushButton, QFileDialog, QMessageBox
 
 from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
@@ -67,6 +67,8 @@ class ReconstructionTool(QWidget):
         self.sfm_widget = PointCanvas()
         self.mvs_widget = QVTKRenderWindowInteractor()
         self.dem_widget = QWidget()
+        self.log_widget = QWidget()
+        self.log_text = QTextEdit(self.log_widget)
         self.message_box = QMessageBox()
         self.figure_able = 0
 
@@ -83,6 +85,7 @@ class ReconstructionTool(QWidget):
         self.layout.addWidget(self.mvs_widget, 2, 2)
         self.layout.addWidget(self.dem_widget, 3, 1)
         self.layout.addWidget(self.setting_widget, 3, 3)
+        self.layout.addWidget(self.log_widget, 1, 4, -1, -1)
 
         self.layout.setRowStretch(1, 1)
         self.layout.setRowStretch(2, 6)
@@ -90,16 +93,25 @@ class ReconstructionTool(QWidget):
         self.layout.setColumnStretch(1, 6)
         self.layout.setColumnStretch(2, 6)
         self.layout.setColumnStretch(3, 6)
+        self.layout.setColumnStretch(4, 3)
+
         self.setLayout(self.layout)
         # calc_hwnd = win32gui.FindWindow(None, r"C:\WINDOWS\system32\cmd.exe")
         # win32gui.SetParent(calc_hwnd, int(self.winId()))
+
+        self.log_text.setGeometry(QRect(0, 0, 800, 200))
+        self.log_text.setObjectName("Logging")
+        self.log_text.setReadOnly(True)
+
+        sys.stdout = EmittingStream(textWritten=self.output_written)
+        sys.stderr = EmittingStream(textWritten=self.output_written)
 
         # self.button_widget.setFixedHeight(60)
         self.setWindowTitle('三维重建')
         self.setWindowIcon(QIcon(r'themes\wine.ico'))
         # desktop = QApplication.desktop()
         # self.resize(desktop.width(), desktop.height()-80)
-        self.resize(1200, 800)
+        self.resize(1500, 900)
         self.move(80, 80)
         self.show()
 
@@ -123,7 +135,7 @@ class ReconstructionTool(QWidget):
 
         plane_btn = QPushButton('计算结构面')
         plane_btn.setToolTip('计算结构面')
-        plane_btn.clicked.connect(self.dem_func)
+        plane_btn.clicked.connect(self.plane_func)
 
         save_btn = QPushButton('保存')
         save_btn.setToolTip('保存图像或数据')
@@ -168,22 +180,22 @@ class ReconstructionTool(QWidget):
         print(self.image_dir)
 
     def sparse_func(self):
-        # self.output_dir = QFileDialog.getExistingDirectory(self, '选择输出文件夹')
-        # reconstruction.sparse_reconstruct(self.image_dir, self.output_dir)
-        # self.show_message("稀疏重建完成")
+        self.output_dir = QFileDialog.getExistingDirectory(self, '选择输出文件夹')
+        self.mvs_dir = os.path.join(self.output_dir, 'mvs')
+        reconstruction.sparse_reconstruct(self.image_dir, self.output_dir)
+        self.show_message("稀疏重建完成")
         self.sfm_show()
 
     def dense_func(self):
-        # if len(self.mvs_dir) < 2:
-        #     self.mvs_dir = QFileDialog.getExistingDirectory(self, '选择mvs文件夹')
-        # reconstruction.dense_reconstruct(self.mvs_dir)
-        # self.show_message("稠密重建完成")
+        if len(self.mvs_dir) < 2:
+            self.mvs_dir = QFileDialog.getExistingDirectory(self, '选择mvs文件夹')
+        reconstruction.dense_reconstruct(self.mvs_dir)
+        self.show_message("稠密重建完成")
         self.mvs_show()
 
     def sfm_show(self):
-        file_name = os.path.join(
-            "C://Users//Freeverc//Projects//Fun//Reconstruction//ReconstructionTool//data//out2//sfm",
-            "cloud_and_poses.ply")
+        sfm_dir = os.path.join(self.output_dir, 'sfm')
+        file_name = os.path.join(sfm_dir, "cloud_and_poses.ply")
 
         point_cloud = o3d.io.read_point_cloud(file_name)
         data = np.asarray(point_cloud.points)
@@ -227,9 +239,10 @@ class ReconstructionTool(QWidget):
         reconstruction.generate_dem(self.mvs_dir)
         self.show_message("计算DEM完成")
 
-    def detect_planes_func(self):
+    def plane_func(self):
         if len(self.mvs_dir) < 2:
             self.mvs_dir = QFileDialog.getExistingDirectory(self, '选择mvs文件夹')
+        print(self.mvs_dir)
         reconstruction.detect_planes(self.mvs_dir)
         self.show_message("检测平面完成")
 
@@ -274,7 +287,7 @@ class ReconstructionTool(QWidget):
                 self.setting_widget.depth_resolution_le.text())
             self.options['fusion_neibor_num'] = int(
                 self.setting_widget.fusion_neibor_num_le.text())
-            self.options['dem_resolution']= int(
+            self.options['dem_resolution'] = int(
                 self.setting_widget.dem_resolution_le.text())
             self.options['plane_thresh'] = int(
                 self.setting_widget.plane_thresh.text())
@@ -313,6 +326,20 @@ class ReconstructionTool(QWidget):
             str(self.options['dem_resolution']))
         self.setting_widget.plane_thresh.setText(
             str(self.options['plane_thresh']))
+
+    def output_written(self, text):
+        cursor = self.log_text.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        cursor.insertText(text)
+        self.log_text.setTextCursor(cursor)
+        self.log_text.ensureCursorVisible()
+
+
+class EmittingStream(QObject):
+    textWritten = pyqtSignal(str)  # 定义一个发送str的信号
+
+    def write(self, text):
+        self.textWritten.emit(str(text))
 
 
 def print_hi(name):
